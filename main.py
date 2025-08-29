@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Global Voice Transcription App for macOS
-Press Cmd+Shift+Space to start/stop recording and auto-transcribe with OpenAI Whisper
+Cross-Platform Global Voice Transcription App
+Supports macOS and Linux - automatically detects platform and uses appropriate shortcuts
 """
 
 import os
@@ -17,17 +17,8 @@ import pyperclip
 from openai import OpenAI
 from pynput import keyboard
 
-# Use native macOS notifications via osascript instead of plyer
-def show_notification(title: str, message: str):
-    """Show native macOS notification using osascript"""
-    try:
-        if config.SHOW_NOTIFICATIONS:
-            escaped_message = message.replace('"', '\\"').replace("'", "\\'")
-            os.system(f'osascript -e "display notification \\"{escaped_message}\\" with title \\"{title}\\""')
-    except Exception:
-        pass  # Fail silently if notifications don't work
-
 import config
+from platform_utils import get_platform_handler, get_platform_info, check_linux_dependencies
 
 
 class VoiceTranscriber:
@@ -38,17 +29,48 @@ class VoiceTranscriber:
         self.audio_data = []
         self.pyaudio_instance = pyaudio.PyAudio()
         
+        # Get platform handler
+        self.platform_handler = get_platform_handler()
+        
+        # Display platform info
+        platform_info = get_platform_info()
+        print(f"🖥️  Platform: {platform_info['name']}")
+        
+        # Check Linux dependencies if on Linux
+        if platform_info['system'].lower() == 'linux':
+            self._check_linux_setup()
+        
         # Setup keyboard listener
         self.setup_keyboard_listener()
         
         print("🎤 Voice Transcriber initialized")
-        print(f"📋 Shortcut: {'+'.join(config.TOGGLE_SHORTCUT)}")
+        print(f"📋 Shortcut: {config.SHORTCUT_DISPLAY}")
         print("🔄 Press the shortcut to start recording...")
 
+    def _check_linux_setup(self):
+        """Check Linux dependencies and provide setup guidance"""
+        deps = check_linux_dependencies()
+        
+        if not any(deps.values()):
+            print("⚠️  Warning: No Linux dependencies detected")
+            print("   Install required packages:")
+            print("   sudo apt install libnotify-bin xdotool  # For X11")
+            print("   sudo apt install libnotify-bin ydotool  # For Wayland")
+        else:
+            available = [tool for tool, avail in deps.items() if avail]
+            print(f"✅ Linux tools available: {', '.join(available)}")
+    
     def setup_keyboard_listener(self):
-        """Setup global keyboard shortcut listener"""
+        """Setup global keyboard shortcut listener with platform-specific keys"""
+        shortcut_info = self.platform_handler.get_shortcut_keys()
+        modifier = shortcut_info['modifier']
+        secondary = shortcut_info['secondary']
+        key = shortcut_info['key']
+        
+        shortcut_string = f'<{modifier}>+<{secondary}>+<{key}>'
+        
         self.keyboard_listener = keyboard.GlobalHotKeys({
-            '<cmd>+<shift>+<space>': self.toggle_recording
+            shortcut_string: self.toggle_recording
         })
         self.keyboard_listener.start()
 
@@ -67,7 +89,7 @@ class VoiceTranscriber:
         self.is_recording = True
         self.audio_data = []
         
-        show_notification("Voice Transcriber", "🔴 Recording started...")
+        self.platform_handler.show_notification("Voice Transcriber", "🔴 Recording started...")
         
         print("🔴 Recording started...")
         
@@ -84,7 +106,7 @@ class VoiceTranscriber:
         except Exception as e:
             print(f"❌ Error starting recording: {e}")
             self.is_recording = False
-            show_notification("Voice Transcriber", "❌ Failed to start recording")
+            self.platform_handler.show_notification("Voice Transcriber", "❌ Failed to start recording")
 
     def audio_callback(self, in_data, frame_count, time_info, status):
         """Callback function for audio stream"""
@@ -100,7 +122,7 @@ class VoiceTranscriber:
         self.is_recording = False
         print("⏹️ Recording stopped, processing...")
         
-        show_notification("Voice Transcriber", "⏹️ Processing transcription...")
+        self.platform_handler.show_notification("Voice Transcriber", "⏹️ Processing transcription...")
         
         if self.audio_stream:
             self.audio_stream.stop_stream()
@@ -132,7 +154,7 @@ class VoiceTranscriber:
                 
         except Exception as e:
             print(f"❌ Error processing recording: {e}")
-            show_notification("Voice Transcriber", f"❌ Error: {str(e)}")
+            self.platform_handler.show_notification("Voice Transcriber", f"❌ Error: {str(e)}")
         finally:
             # Cleanup
             if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
@@ -171,17 +193,19 @@ class VoiceTranscriber:
             # Copy to clipboard
             pyperclip.copy(text)
             
-            # Simulate Cmd+V to paste
             # Small delay to ensure clipboard is ready
             time.sleep(0.1)
             
-            # Use AppleScript to paste (more reliable on macOS)
-            os.system('osascript -e "tell application \\"System Events\\" to keystroke \\"v\\" using command down"')
+            # Use platform-specific paste method
+            self.platform_handler.paste_text()
             
-            show_notification("Voice Transcriber", f"✅ Pasted: {text[:50]}{'...' if len(text) > 50 else ''}")
+            # Show success notification
+            preview = text[:50] + '...' if len(text) > 50 else text
+            self.platform_handler.show_notification("Voice Transcriber", f"✅ Pasted: {preview}")
                 
         except Exception as e:
             print(f"❌ Error pasting text: {e}")
+            self.platform_handler.show_notification("Voice Transcriber", f"❌ Paste failed: {str(e)}")
 
     def cleanup(self):
         """Clean up resources"""
