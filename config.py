@@ -1,5 +1,9 @@
 import os
+from dotenv import load_dotenv
 from platform_utils import get_platform_handler
+
+# Load environment variables from .env file
+load_dotenv()
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_API_KEY")
